@@ -1,5 +1,5 @@
 # 在 GitHub 的云端机器上把「深深桌宠」重新打包成可上下乱跑的 APK。
-# 放在 fork 的 .github/workflows/build-apk.yml，Actions 里点一下就跑。
+# 放在 fork 的 .github/workflows/build-apk.yml，push 或手动都会跑。
 name: build-apk-2d-roam
 
 on:
@@ -20,11 +20,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # 托管 runner 自带 Android SDK；不再用 setup-android（它跑 sdkmanager tools 会挂）。
       - name: Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 接受 SDK 许可
-        run: yes | sdkmanager --licenses > /dev/null || true
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+          ls "${ANDROID_HOME}" | head -20
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(ls "${ANDROID_HOME}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)"
+          fi
+          echo "sdkmanager=${SDKMANAGER}"
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses > /dev/null || true
+            yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null || true
+          fi
+          echo "installed platforms:"; ls "${ANDROID_HOME}/platforms" 2>/dev/null || true
+          echo "installed build-tools:"; ls "${ANDROID_HOME}/build-tools" 2>/dev/null || true
 
       - name: Python
         uses: actions/setup-python@v5
