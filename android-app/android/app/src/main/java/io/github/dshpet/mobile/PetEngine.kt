@@ -91,6 +91,9 @@ class PetEngine(clips: List<ClipSpec>, private val random: Random = Random.Defau
     private var elapsed = 0.0
     private var moveStart = 0.0
     private var moveTarget = 0.0
+    /** Vertical ends of the leg in progress: the roam now uses the whole screen. */
+    private var moveStartY = 0.0
+    private var moveTargetY = 0.0
     private var pendingMove: ClipSpec? = null
     val normalizedX get() = if (right > 0) (x / right).coerceIn(-1.0, 2.0) else 0.0
     val normalizedY get() = if (bottom > 0) (y / bottom).coerceIn(-1.0, 2.0) else 0.0
@@ -169,6 +172,36 @@ class PetEngine(clips: List<ClipSpec>, private val random: Random = Random.Defau
         if (absent.isNotEmpty()) onMissing?.invoke(absent.random(random))
     }
 
+    /**
+     * A walk that reads as vertical travel: the floating steps and the crab
+     * walk. Both travel in the download packs, so when the device does not have
+     * them yet this asks for one and falls back to any walk it can play.
+     */
+    private fun pickVertical(): ClipSpec {
+        val pool = pools["move"] ?: groups.getValue("move")
+        val vertical = pool.filter { it.title.contains("漂浮") || it.title.contains("螃蟹") }
+        val check = availability
+        val ready = if (check == null) vertical else vertical.filter(check)
+        if (ready.isNotEmpty()) return ready.random(random)
+        if (vertical.isNotEmpty()) requestMissing(vertical)
+        return pick("move")
+    }
+
+    /**
+     * How far the next self-chosen leg climbs or sinks, in source pixels.
+     *
+     * Zero means "walk along the floor" and stays a good part of the legs, so
+     * the pet still looks like it did before. The rest move between a twelfth
+     * and a fifth of the screen up or down, which over a few minutes takes the
+     * pet to every height instead of pacing the bottom edge.
+     */
+    private fun verticalStep(): Double {
+        if (bottom <= 0.0 || random.nextDouble() < .4) return 0.0
+        val reach = bottom * (.08 + random.nextDouble() * .14)
+        val step = if (random.nextBoolean()) reach else -reach
+        return (y + step).coerceIn(0.0, bottom) - y
+    }
+
     private fun enter(next: PetMode, animation: ClipSpec) {
         mode = next; clip = animation; elapsed = 0.0; clipStarts++
     }
@@ -197,7 +230,10 @@ class PetEngine(clips: List<ClipSpec>, private val random: Random = Random.Defau
         if (chosen.group == "move") {
             val direction = if (x <= right * .5) 1 else -1
             moveStart = x
+            moveStartY = y
             moveTarget = clampX(x + direction * chosen.stride)
+            // An action picked from the menu still walks along the floor.
+            moveTargetY = y
             facingRight = moveTarget > x
             enter(PetMode.MOVE, chosen)
             return
@@ -260,6 +296,7 @@ class PetEngine(clips: List<ClipSpec>, private val random: Random = Random.Defau
                     a + (b - a) * (offset - i)
                 }
                 x = clampX(moveStart + (moveTarget - moveStart) * progress)
+                y = clampY(moveStartY + (moveTargetY - moveStartY) * progress)
                 if (elapsed >= clip.duration) idle()
             }
             PetMode.CLICK -> if (elapsed >= clip.duration) idle()
@@ -268,16 +305,21 @@ class PetEngine(clips: List<ClipSpec>, private val random: Random = Random.Defau
                 if (next != null && wander) {
                     facingRight = moveTarget > x
                     moveStart = x
+                    moveStartY = y
                     enter(PetMode.MOVE, next)
                 } else idle()
             }
             PetMode.IDLE -> if (elapsed >= clip.duration) {
                 if (!wander || right == 0.0 || random.nextDouble() < .6) idle()
                 else {
-                    val animation = pick("move")
+                    // Climb or sink first, then pick the walk that fits it.
+                    val dy = verticalStep()
+                    val animation = if (dy == 0.0) pick("move") else pickVertical()
                     val direction = if (x < right * .2) 1 else if (x > right * .8) -1 else if (random.nextBoolean()) 1 else -1
-                    moveTarget = clampX(x + direction * animation.stride)
                     moveStart = x
+                    moveTarget = clampX(x + direction * animation.stride)
+                    moveStartY = y
+                    moveTargetY = clampY(y + dy)
                     pendingMove = animation
                     if ((moveTarget > x) != facingRight) enter(PetMode.TURN, pick("turn"))
                     else enter(PetMode.MOVE, animation)
