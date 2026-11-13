@@ -24,8 +24,7 @@ jobs:
       - name: Android SDK
         run: |
           echo "ANDROID_HOME=${ANDROID_HOME}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
-          ls "${ANDROID_HOME}" | head -20
+          ls "${ANDROID_HOME}" | head -20 || true
           SDKMANAGER="$(command -v sdkmanager || true)"
           if [ -z "$SDKMANAGER" ]; then
             SDKMANAGER="$(ls "${ANDROID_HOME}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)"
@@ -60,8 +59,33 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pillow imageio-ffmpeg "PySide6-Essentials==6.8.3"
 
-      - name: 拉取动画源视频（约 52 MB）
-        run: python android-app/scripts/fetch_character_videos.py
+      # 源动画就在仓库的 assets/webm 里；按 FILES.txt 铺成 videos/<分组>/<名字>.webm。
+      # 上游的 fetch_character_videos.py 直接拼中文文件名，Linux 上会 UnicodeEncodeError。
+      - name: 准备动画源视频
+        run: |
+          python - <<'PY'
+          import shutil
+          from pathlib import Path
+          src = Path("assets/webm")
+          out = Path("android-app/assets/characters/shenshen/videos")
+          names = [l.strip() for l in (out / "FILES.txt").read_text(encoding="utf-8").splitlines() if l.strip()]
+          missing = []
+          for name in names:
+              target = out / name
+              if target.is_file() and target.stat().st_size:
+                  continue
+              source = src / Path(name).name
+              if not source.is_file():
+                  source = src / ("原地" + Path(name).name)  # 左转奔跑 -> 原地左转奔跑
+              if not source.is_file():
+                  missing.append(name)
+                  continue
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source, target)
+          print("copied clips: %d/%d" % (len(names) - len(missing), len(names)))
+          if missing:
+              raise SystemExit("missing sources: " + ", ".join(missing[:5]))
+          PY
 
       - name: 打包 debug APK
         env:
